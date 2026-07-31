@@ -11,6 +11,8 @@ import { Modal } from '@/components/ui/Modal';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { gamificationService, redemptionService } from '@/services/api';
+import { supabase } from '@/services/supabaseClient';
+import { useRealtimeTable } from '@/hooks/useRealtimeTable';
 import type { Badge, RewardHistory, RewardItem, Redemption } from '@/types';
 import { getLevelColor, pointsToNextLevel, timeAgo } from '@/utils/helpers';
 
@@ -60,6 +62,47 @@ export function RewardsPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // ── Realtime: refresh reward history + points when profiles change ──
+  useRealtimeTable('profiles', async () => {
+    try {
+      const pts = await redemptionService.getUserPoints();
+      setCurrentPoints(pts);
+    } catch { /* ignore */ }
+  }, undefined);
+
+  // ── Realtime: refresh redemptions when new ones are created ──
+  useRealtimeTable('redemptions', async () => {
+    try {
+      const redemptionData = await redemptionService.getRedemptions();
+      setRedemptions(redemptionData);
+    } catch { /* ignore */ }
+  }, undefined);
+
+  // ── Realtime: refresh reward_history when new points are awarded ──
+  useRealtimeTable('reward_history', async () => {
+    try {
+      const { data: supaUser } = await supabase.auth.getUser();
+      const userId = supaUser.user?.id;
+      if (!userId) return;
+      const { data: rows } = await supabase
+        .from('reward_history')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      if (rows) {
+        const mapped: RewardHistory[] = rows.map((r: any) => ({
+          id: r.id,
+          title: r.title ?? '',
+          points: r.points ?? 0,
+          type: r.type ?? 'report-verified',
+          timestamp: r.created_at ?? new Date().toISOString(),
+        }));
+        setRewards(mapped);
+      }
+    } catch { /* ignore */ }
+  }, undefined);
 
   const levelProgress = user ? pointsToNextLevel(currentPoints) : null;
   const earnedBadges = badges.filter((b) => b.earned);

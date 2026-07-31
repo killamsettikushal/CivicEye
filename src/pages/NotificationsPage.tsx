@@ -8,6 +8,8 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { EmptyState } from '@/components/ui/StatCard';
 import { notificationService } from '@/services/api';
 import { useToast } from '@/contexts/ToastContext';
+import { useRealtimeTable } from '@/hooks/useRealtimeTable';
+import { supabase } from '@/services/supabaseClient';
 import type { Notification } from '@/types';
 import { timeAgo } from '@/utils/helpers';
 
@@ -41,6 +43,33 @@ export function NotificationsPage() {
       setLoading(false);
     })();
   }, []);
+
+  // ── Realtime: refresh notifications when new ones arrive ──
+  useRealtimeTable('notifications', async () => {
+    try {
+      const { data: supaUser } = await supabase.auth.getUser();
+      const userId = supaUser.user?.id;
+      if (!userId) return;
+      const { data: rows } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (rows) {
+        const mapped: Notification[] = rows.map((n: any) => ({
+          id: n.id,
+          type: n.type ?? 'report-submitted',
+          title: n.title ?? '',
+          message: n.message ?? '',
+          timestamp: n.created_at ?? new Date().toISOString(),
+          read: n.read ?? false,
+          reportId: n.report_id ?? undefined,
+        }));
+        setNotifications(mapped);
+      }
+    } catch { /* ignore */ }
+  }, undefined);
 
   const handleMarkAllRead = async () => {
     await notificationService.markAllRead();

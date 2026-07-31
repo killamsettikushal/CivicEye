@@ -13,6 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { reportService, gamificationService } from '@/services/api';
 import { adminReportService } from '@/services/adminReportService';
 import { supabase } from '@/services/supabaseClient';
+import { useRealtimeTable } from '@/hooks/useRealtimeTable';
 import type { Report, Badge, LeaderboardEntry } from '@/types';
 import { CATEGORY_LABELS, STATUS_LABELS } from '@/data/mockData';
 import { getStatusColor, getSeverityColor, timeAgo, pointsToNextLevel, getLevelColor } from '@/utils/helpers';
@@ -81,6 +82,33 @@ export function CitizenDashboard() {
       }
     })();
   }, []);
+
+  // ── Realtime: refresh reports + leaderboard when the DB changes ──
+  useRealtimeTable('reports', async () => {
+    try {
+      const { data: supaUser } = await supabase.auth.getUser();
+      const userId = supaUser.user?.id;
+      if (!userId) return;
+      const { data: rows } = await supabase
+        .from('reports')
+        .select('*')
+        .eq('reporter_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(5);
+      if (rows) {
+        setReports(rows.map((r: any) => ({
+          id: r.id, incidentId: r.incident_id, category: r.category,
+          categoryGroup: r.category_group, title: r.title, description: r.description ?? '',
+          status: r.status, severity: r.severity,
+          location: { lat: r.lat ?? 0, lng: r.lng ?? 0, address: r.address ?? '', city: r.city ?? '' },
+          timestamp: r.created_at, reporterId: r.reporter_id ?? '', reporterName: r.reporter_name ?? 'Anonymous',
+          department: r.department ?? '', evidenceUrls: r.evidence_urls ?? [],
+          aiResult: r.ai_result ?? undefined, vehicleNumber: r.vehicle_number ?? undefined,
+          vehicleType: r.vehicle_type ?? undefined,
+        } as any)));
+      }
+    } catch { /* ignore realtime refresh errors */ }
+  }, undefined);
 
   const levelProgress = user ? pointsToNextLevel(user.points) : null;
 

@@ -5,6 +5,8 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { TableSkeleton } from '@/components/ui/Skeleton';
 import { useAuth } from '@/contexts/AuthContext';
 import { gamificationService } from '@/services/api';
+import { supabase } from '@/services/supabaseClient';
+import { useRealtimeTable } from '@/hooks/useRealtimeTable';
 import type { LeaderboardEntry } from '@/types';
 import { getLevelColor } from '@/utils/helpers';
 
@@ -20,6 +22,31 @@ export function LeaderboardPage() {
       setLoading(false);
     })();
   }, []);
+
+  // ── Realtime: refresh leaderboard when profiles change (points/level) ──
+  useRealtimeTable('profiles', async () => {
+    try {
+      const { data: rows } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, points, trust_score, level, reports_verified, city, avatar_url')
+        .order('points', { ascending: false })
+        .limit(20);
+      if (rows) {
+        const mapped: LeaderboardEntry[] = rows.map((p: any, i: number) => ({
+          rank: i + 1,
+          userId: p.id,
+          name: p.full_name ?? p.email?.split('@')[0] ?? 'Anonymous',
+          avatar: p.avatar_url ?? undefined,
+          points: p.points ?? 0,
+          level: p.level ?? 'Bronze',
+          reportsVerified: p.reports_verified ?? 0,
+          trustScore: p.trust_score ?? 50,
+          city: p.city ?? '',
+        }));
+        setEntries(mapped);
+      }
+    } catch { /* ignore */ }
+  }, undefined);
 
   const top3 = entries.slice(0, 3);
   const rest = entries.slice(3);

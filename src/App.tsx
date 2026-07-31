@@ -69,11 +69,15 @@ function AdminRoute({ children }: { children: ReactNode }) {
     console.log('[Router] AdminRoute → redirect to /login (not authenticated)');
     return <Navigate to="/login" replace />;
   }
-  if (user?.role !== 'admin') {
+
+  // Super-admin override: admin@civiceye.gov is always granted access,
+  // even if the profile row hasn't loaded correctly or role is mismatched.
+  const isAdminEmail = user?.email?.toLowerCase() === 'admin@civiceye.gov';
+  if (user?.role !== 'admin' && !isAdminEmail) {
     console.log('[Router] AdminRoute → redirect to /admin/access-denied (role is not admin, got:', user?.role, ')');
     return <Navigate to="/admin/access-denied" replace />;
   }
-  console.log('[Router] AdminRoute → rendering admin page for user:', user?.username);
+  console.log('[Router] AdminRoute → rendering admin page for user:', user?.username, '| role:', user?.role, '| adminOverride:', isAdminEmail && user?.role !== 'admin');
   return <>{children}</>;
 }
 

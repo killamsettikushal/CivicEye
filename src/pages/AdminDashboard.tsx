@@ -14,6 +14,7 @@ import { adminReportService } from '@/services/adminReportService';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { AIRepairVerificationModal } from '@/components/admin/AIRepairVerificationModal';
+import { useRealtimeTable } from '@/hooks/useRealtimeTable';
 import type { Report } from '@/types';
 import { CATEGORY_LABELS, STATUS_LABELS, DEPARTMENTS } from '@/data/mockData';
 import {
@@ -114,6 +115,18 @@ export function AdminDashboard() {
   useEffect(() => {
     loadReports();
   }, [loadReports]);
+
+  // ── Realtime: auto-refresh report list when any report changes ──
+  useRealtimeTable('reports', () => {
+    console.log('[AdminDashboard] Realtime update — reloading reports');
+    loadReports();
+  }, undefined);
+
+  // ── Realtime: refresh when new notifications arrive ──
+  useRealtimeTable('notifications', () => {
+    // Notifications don't require a full report reload, but we log it
+    console.log('[AdminDashboard] Notification realtime update');
+  }, 'recipient_type=eq.admin');
 
   // Compute distances from admin location to each report
   const reportsWithDistance = useMemo(() => {

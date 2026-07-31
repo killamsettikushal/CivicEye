@@ -56,29 +56,67 @@ async function callGemini(geminiUrl: string, geminiBody: Record<string, unknown>
   return { __error: lastError, __status: response?.status ?? 500 } as any;
 }
 
-function buildFallbackResponse(): Record<string, unknown> {
+function buildFallbackResponse(ctx: {
+  category?: string;
+  categoryGroup?: string;
+  description?: string;
+  title?: string;
+}): Record<string, unknown> {
+  const cat = ctx?.category || "other";
+  const group = ctx?.categoryGroup || "infrastructure";
+  const title = (ctx?.title || "").toLowerCase();
+  const desc = (ctx?.description || "").toLowerCase();
+  const text = `${title} ${desc}`;
+  const isTraffic = group === "traffic";
+
+  // Severity heuristics
+  let severity = "medium";
+  let priority = 55;
+  let confidence = 0.72;
+
+  if (["critical", "severe", "danger", "accident", "fire", "flood", "collapse", "urgent"].some((k) => text.includes(k))) {
+    severity = "critical"; priority = 90; confidence = 0.78;
+  } else if (["major", "large", "deep", "broken", "damaged", "blocked", "heavy", "serious"].some((k) => text.includes(k))) {
+    severity = "high"; priority = 72; confidence = 0.75;
+  } else if (["minor", "small", "slight", "cosmetic"].some((k) => text.includes(k))) {
+    severity = "low"; priority = 30; confidence = 0.7;
+  } else {
+    if (["wrong-side-driving", "dangerous-driving", "signal-jumping"].includes(cat)) { severity = "critical"; priority = 88; }
+    else if (["pothole", "road-crack", "open-drain", "traffic-signal-damage", "illegal-construction", "helmet-missing", "triple-riding"].includes(cat)) { severity = "high"; priority = 70; }
+    else if (["garbage", "broken-streetlight"].includes(cat)) { severity = "low"; priority = 35; }
+  }
+
+  const severityExplanation =
+    severity === "critical" ? "High-risk issue flagged from the report description — requires immediate attention." :
+    severity === "high" ? "Significant issue identified from the report details — prompt action recommended." :
+    severity === "low" ? "Minor issue based on the report description — routine handling." :
+    "Moderate issue identified from the report details.";
+
+  const issueLabel = cat.replace(/-/g, " ");
+  const description = desc.slice(0, 200) || `${issueLabel} reported at the reported location.`;
+
   return {
     isRelevant: true,
     invalidImageType: null,
-    imageCategory: "infrastructure-scene",
+    imageCategory: isTraffic ? "traffic-scene" : "infrastructure-scene",
     vehicleType: null,
     vehicleNumber: null,
-    issue: "Road Damage",
-    detectedViolation: null,
-    confidence: 0.85,
-    severity: "high",
-    severityExplanation: "Severe road surface damage posing immediate hazard to vehicles.",
-    priority: 75,
-    description: "Severe pothole detected on road surface",
-    reason: "Image analysis completed using fallback assessment due to AI service unavailability.",
-    detectedObjects: [],
+    issue: cat,
+    detectedViolation: isTraffic ? cat : null,
+    confidence,
+    severity,
+    severityExplanation,
+    priority,
+    description,
+    reason: "Image analysis completed using context-aware fallback due to AI service unavailability.",
+    detectedObjects: [{ label: cat, confidence }],
     imageAuthenticity: {
       isGenuine: true,
       manipulationFlags: [],
       authenticityConfidence: 0.5,
     },
-    evidenceQuality: 0.7,
-    recommendedAction: "Route to roads department for immediate inspection and repair.",
+    evidenceQuality: 0.6,
+    recommendedAction: `Route to the ${isTraffic ? "traffic" : "municipal"} department for inspection and follow-up.`,
     duplicateProbability: 0,
     duplicateOf: null,
   };
@@ -286,7 +324,7 @@ Return ONLY the JSON object.`;
       const isTransient = result.__status === 429 || result.__status === 0 || (result.__status ?? 0) >= 500;
       if (isTransient) {
         console.warn("[gemini-analyze] Transient error, returning fallback:", result.__error);
-        return jsonResponse(buildFallbackResponse(), 200);
+        return jsonResponse(buildFallbackResponse({ category, categoryGroup, description, title }), 200);
       }
       return jsonResponse(
         {
@@ -400,6 +438,6 @@ Return ONLY the JSON object.`;
     return jsonResponse(analysis);
   } catch (err) {
     console.warn("[gemini-analyze] Unhandled error, returning fallback:", err);
-    return jsonResponse(buildFallbackResponse(), 200);
+    return jsonResponse(buildFallbackResponse({ category, categoryGroup, description, title }), 200);
   }
 });
