@@ -3,58 +3,17 @@ import type {
   ReportCategory,
   AIResult,
   Notification,
-  User,
   ProcessingStep,
   ImageAuthenticity,
+  LeaderboardEntry,
 } from '@/types';
 import { supabase } from '@/services/supabaseClient';
 import { geminiService } from '@/services/geminiService';
 import { arrayBufferToBase64 } from '@/utils/helpers';
 import {
-  MOCK_REPORTS,
-  MOCK_NOTIFICATIONS,
-  MOCK_USERS,
-  MOCK_BADGES,
-  MOCK_REWARDS,
-  MOCK_LEADERBOARD,
-  MOCK_TRUST_HISTORY,
-  MOCK_ANALYTICS,
   getDepartmentForCategory,
   getCategoryGroup,
-  CATEGORY_LABELS,
 } from '@/data/mockData';
-
-// ============ Storage helpers (localStorage persistence) ============
-
-const REPORTS_KEY = 'civiceye_reports';
-const NOTIFS_KEY = 'civiceye_notifications';
-const USER_KEY = 'civiceye_current_user';
-
-function loadReports(): Report[] {
-  try {
-    const stored = localStorage.getItem(REPORTS_KEY);
-    if (stored) return JSON.parse(stored);
-  } catch { /* ignore */ }
-  saveReports(MOCK_REPORTS);
-  return MOCK_REPORTS;
-}
-
-function saveReports(reports: Report[]) {
-  try { localStorage.setItem(REPORTS_KEY, JSON.stringify(reports)); } catch { /* ignore */ }
-}
-
-function loadNotifications(): Notification[] {
-  try {
-    const stored = localStorage.getItem(NOTIFS_KEY);
-    if (stored) return JSON.parse(stored);
-  } catch { /* ignore */ }
-  saveNotifications(MOCK_NOTIFICATIONS);
-  return MOCK_NOTIFICATIONS;
-}
-
-function saveNotifications(notifs: Notification[]) {
-  try { localStorage.setItem(NOTIFS_KEY, JSON.stringify(notifs)); } catch { /* ignore */ }
-}
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -96,18 +55,24 @@ export async function processReport(
     throw new Error('Image evidence is required for AI analysis. Please upload a photo of the issue.');
   }
 
-  // Mark upload + quality steps as in progress
   for (let i = 0; i < 5; i++) {
     onStepProgress(i, 50);
   }
 
   const firstImage = evidence![0];
+  console.log('[processReport] Fetching image for AI analysis:', firstImage.url);
   const imgResp = await fetch(firstImage.url);
+  if (!imgResp.ok) {
+    console.error('[processReport] Failed to fetch image from storage:', imgResp.status);
+    throw new Error('Failed to load uploaded image for AI analysis. Please try again.');
+  }
   const blob = await imgResp.blob();
   const mimeType = blob.type || 'image/jpeg';
   const arrayBuffer = await blob.arrayBuffer();
   const base64 = arrayBufferToBase64(arrayBuffer);
+  console.log('[processReport] Image fetched:', { mimeType, size: blob.size, base64Length: base64.length });
 
+  console.log('[processReport] Calling Gemini for image analysis...');
   const analysis = await geminiService.analyzeImage(base64, mimeType, {
     category,
     categoryGroup: getCategoryGroup(category),
@@ -117,17 +82,19 @@ export async function processReport(
     lng: context.lng ?? 0,
     city: context.city ?? '',
   });
+  console.log('[processReport] Gemini analysis result:', {
+    isRelevant: analysis.isRelevant,
+    severity: analysis.severity,
+    confidence: analysis.confidence,
+    issue: analysis.issue,
+  });
 
-  // Strict validation gate: halt all downstream processing (OCR, plate
-  // extraction, violation classification) when the image is not a genuine
-  // traffic/civic scene. Surface the rejection to the user.
   if (!analysis.isRelevant) {
     const invalidType = (analysis as any).invalidImageType ?? 'other';
     const reason = analysis.reason ?? 'This does not appear to be a valid traffic violation photo.';
     throw new Error(`INVALID_IMAGE:${invalidType}:${reason}`);
   }
 
-  // Complete all processing steps
   for (let i = 0; i < PROCESSING_STEPS.length; i++) {
     onStepProgress(i, 100);
   }
@@ -167,7 +134,7 @@ export async function processReport(
   };
 }
 
-// ============ Report Service ============
+// ============ Report Service (Supabase only — no localStorage) ============
 
 export const reportService = {
   async createReport(data: {
@@ -177,70 +144,56 @@ export const reportService = {
     location: { lat: number; lng: number; address: string; city: string };
     evidenceUrls: string[];
   }): Promise<Report> {
-    await delay(400);
-    const reports = loadReports();
-    const { data: supaUser } = await supabase.auth.getUser();
-    const reporterId = supaUser.user?.id ?? 'u1';
-    const reporterName = supaUser.user?.user_metadata?.full_name || supaUser.user?.email?.split('@')[0] || 'Demo User';
-    const incidentId = generateIncidentId();
-    const report: Report = {
-      id: `r${Date.now()}`,
-      incidentId,
-      category: data.category,
-      categoryGroup: getCategoryGroup(data.category),
-      title: data.title,
-      description: data.description,
-      status: 'ai-processing',
-      severity: 'medium',
-      location: data.location,
-      timestamp: new Date().toISOString(),
-      reporterId,
-      reporterName,
-      department: getDepartmentForCategory(data.category),
-      evidenceUrls: data.evidenceUrls,
-    };
-    reports.unshift(report);
-    saveReports(reports);
-
-    // Persist to Supabase so the admin portal can receive it in real time
-    try {
-      const { data: insertedRow, error: insertError } = await supabase
-        .from('reports')
-        .insert({
-          incident_id: incidentId,
-          reporter_id: supaUser.user?.id ?? null,
-          reporter_name: reporterName,
-          category: data.category,
-          category_group: getCategoryGroup(data.category),
-          title: data.title,
-          description: data.description,
-          status: 'ai-processing',
-          severity: 'medium',
-          department: getDepartmentForCategory(data.category),
-          lat: data.location.lat,
-          lng: data.location.lng,
-          address: data.location.address,
-          city: data.location.city,
-          evidence_urls: data.evidenceUrls,
-        })
-        .select('id')
-        .single();
-
-      if (insertError) {
-        console.error('[reportService.createReport] Supabase insert failed:', insertError.code, insertError.message);
-      } else {
-        console.log('[reportService.createReport] Report persisted to Supabase with id:', insertedRow?.id);
-      }
-    } catch (err) {
-      console.error('[reportService.createReport] Supabase insert threw:', err);
+    const { data: supaUser, error: authError } = await supabase.auth.getUser();
+    if (authError || !supaUser.user) {
+      console.error('[reportService.createReport] Auth error:', authError?.message);
+      throw new Error('You must be signed in to submit a report.');
     }
 
-    addNotification({
-      type: 'report-submitted',
-      title: 'Report Submitted',
-      message: `Your report ${report.incidentId} has been submitted and is being processed.`,
-      reportId: report.id,
+    const reporterId = supaUser.user.id;
+    const reporterName = supaUser.user.user_metadata?.full_name || supaUser.user.email?.split('@')[0] || 'Anonymous';
+    const incidentId = generateIncidentId();
+    const department = getDepartmentForCategory(data.category);
+    const now = new Date().toISOString();
+
+    console.log('[reportService.createReport] Inserting report to Supabase:', {
+      incidentId,
+      reporterId,
+      category: data.category,
+      title: data.title,
+      evidenceCount: data.evidenceUrls.length,
     });
+
+    const { data: insertedRow, error: insertError } = await supabase
+      .from('reports')
+      .insert({
+        incident_id: incidentId,
+        reporter_id: reporterId,
+        reporter_name: reporterName,
+        category: data.category,
+        category_group: getCategoryGroup(data.category),
+        title: data.title,
+        description: data.description,
+        status: 'pending',
+        severity: 'medium',
+        department,
+        lat: data.location.lat,
+        lng: data.location.lng,
+        address: data.location.address,
+        city: data.location.city,
+        evidence_urls: data.evidenceUrls,
+        created_at: now,
+        updated_at: now,
+      })
+      .select('id, incident_id')
+      .single();
+
+    if (insertError) {
+      console.error('[reportService.createReport] Supabase insert FAILED:', insertError.code, insertError.message, insertError.details);
+      throw new Error(`Failed to save report to database: ${insertError.message}`);
+    }
+
+    console.log('[reportService.createReport] Report saved to Supabase with id:', insertedRow?.id, '| incident_id:', insertedRow?.incident_id);
 
     // Notify admins of the new report
     try {
@@ -249,57 +202,59 @@ export const reportService = {
         type: 'new-report',
         title: 'New Report Submitted',
         message: `New ${data.category} report: ${data.title}`,
-        report_id: report.id,
+        report_id: insertedRow?.id,
       });
-    } catch { /* non-critical */ }
+      console.log('[reportService.createReport] Admin notification inserted');
+    } catch (notifErr) {
+      console.warn('[reportService.createReport] Admin notification failed (non-critical):', notifErr);
+    }
+
+    const report: Report = {
+      id: insertedRow?.id ?? `r${Date.now()}`,
+      incidentId,
+      category: data.category,
+      categoryGroup: getCategoryGroup(data.category),
+      title: data.title,
+      description: data.description,
+      status: 'pending',
+      severity: 'medium',
+      location: data.location,
+      timestamp: now,
+      reporterId,
+      reporterName,
+      department,
+      evidenceUrls: data.evidenceUrls,
+    };
 
     return report;
   },
 
   async updateReportWithAI(reportId: string, aiResult: AIResult): Promise<void> {
-    const reports = loadReports();
-    const idx = reports.findIndex((r) => r.id === reportId);
-    if (idx >= 0) {
-      reports[idx].aiResult = aiResult;
-      reports[idx].status = aiResult.duplicateProbability > 0.6 ? 'rejected' : 'verified';
-      reports[idx].severity = aiResult.severity;
-      if (aiResult.vehicleNumber) reports[idx].vehicleNumber = aiResult.vehicleNumber;
-      if (aiResult.vehicleType) reports[idx].vehicleType = aiResult.vehicleType;
-      saveReports(reports);
+    console.log('[updateReportWithAI] Syncing AI result to Supabase for report:', reportId);
 
-      // Sync AI result + status to Supabase
-      try {
-        const newStatus = aiResult.duplicateProbability > 0.6 ? 'rejected' : 'verified';
-        const { error: updateError } = await supabase
-          .from('reports')
-          .update({
-            status: newStatus,
-            severity: aiResult.severity,
-            severity_explanation: aiResult.severityExplanation ?? null,
-            ai_result: aiResult as any,
-            vehicle_number: aiResult.vehicleNumber ?? null,
-            vehicle_type: aiResult.vehicleType ?? null,
-            fraud_score: aiResult.duplicateProbability > 0.6 ? Math.round(aiResult.duplicateProbability * 100) : 0,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('incident_id', reports[idx].incidentId);
+    const newStatus = aiResult.duplicateProbability > 0.6 ? 'rejected' : 'verified';
+    const fraudScore = aiResult.duplicateProbability > 0.6 ? Math.round(aiResult.duplicateProbability * 100) : 0;
 
-        if (updateError) {
-          console.error('[updateReportWithAI] Supabase update failed:', updateError.code, updateError.message);
-        } else {
-          console.log('[updateReportWithAI] AI result synced to Supabase for incident:', reports[idx].incidentId, '| status:', newStatus, '| severity:', aiResult.severity);
-        }
-      } catch (err) {
-        console.error('[updateReportWithAI] Supabase update threw:', err);
-      }
+    const { error: updateError } = await supabase
+      .from('reports')
+      .update({
+        status: newStatus,
+        severity: aiResult.severity,
+        severity_explanation: aiResult.severityExplanation ?? null,
+        ai_result: aiResult as any,
+        vehicle_number: aiResult.vehicleNumber ?? null,
+        vehicle_type: aiResult.vehicleType ?? null,
+        fraud_score: fraudScore,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', reportId);
 
-      addNotification({
-        type: 'ai-completed',
-        title: 'AI Analysis Complete',
-        message: `Report ${reports[idx].incidentId} analysed. Severity: ${aiResult.severity}. Confidence: ${Math.round(aiResult.confidenceScore * 100)}%`,
-        reportId: reportId,
-      });
+    if (updateError) {
+      console.error('[updateReportWithAI] Supabase update FAILED:', updateError.code, updateError.message);
+      throw new Error(`Failed to save AI analysis to database: ${updateError.message}`);
     }
+
+    console.log('[updateReportWithAI] AI result synced to Supabase | status:', newStatus, '| severity:', aiResult.severity, '| confidence:', aiResult.confidenceScore);
   },
 
   async getReports(filters?: {
@@ -308,49 +263,103 @@ export const reportService = {
     department?: string;
     search?: string;
   }): Promise<Report[]> {
-    await delay(300);
-    let reports = loadReports();
-    if (filters?.category) reports = reports.filter((r) => r.category === filters.category);
-    if (filters?.status) reports = reports.filter((r) => r.status === filters.status);
-    if (filters?.department) reports = reports.filter((r) => r.department === filters.department);
+    let query = supabase.from('reports').select('*').order('created_at', { ascending: false });
+    if (filters?.category) query = query.eq('category', filters.category);
+    if (filters?.status) query = query.eq('status', filters.status);
+    if (filters?.department) query = query.eq('department', filters.department);
     if (filters?.search) {
       const q = filters.search.toLowerCase();
-      reports = reports.filter(
-        (r) =>
-          r.incidentId.toLowerCase().includes(q) ||
-          r.title.toLowerCase().includes(q) ||
-          r.location.address.toLowerCase().includes(q) ||
-          r.reporterName.toLowerCase().includes(q) ||
-          r.department.toLowerCase().includes(q) ||
-          (r.vehicleNumber ?? '').toLowerCase().includes(q),
-      );
+      query = query.or(`incident_id.ilike.%${q}%,title.ilike.%${q}%,reporter_name.ilike.%${q}%`);
     }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('[reportService.getReports] Query failed:', error.code, error.message);
+      throw new Error(`Failed to load reports: ${error.message}`);
+    }
+
+    const reports: Report[] = (data ?? []).map((r: any) => ({
+      id: r.id,
+      incidentId: r.incident_id,
+      category: r.category,
+      categoryGroup: r.category_group,
+      title: r.title,
+      description: r.description,
+      status: r.status,
+      severity: r.severity,
+      location: {
+        lat: r.lat ?? 0,
+        lng: r.lng ?? 0,
+        address: r.address ?? '',
+        city: r.city ?? '',
+      },
+      timestamp: r.created_at,
+      reporterId: r.reporter_id,
+      reporterName: r.reporter_name,
+      department: r.department,
+      evidenceUrls: r.evidence_urls ?? [],
+      aiResult: r.ai_result ?? undefined,
+      vehicleNumber: r.vehicle_number ?? undefined,
+      vehicleType: r.vehicle_type ?? undefined,
+    }));
+
     return reports;
   },
 
   async getReportById(id: string): Promise<Report | null> {
-    await delay(200);
-    const reports = loadReports();
-    return reports.find((r) => r.id === id) ?? null;
+    const { data, error } = await supabase
+      .from('reports')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      console.error('[reportService.getReportById] Query failed:', error.code, error.message);
+      return null;
+    }
+
+    if (!data) return null;
+
+    return {
+      id: data.id,
+      incidentId: data.incident_id,
+      category: data.category,
+      categoryGroup: data.category_group,
+      title: data.title,
+      description: data.description,
+      status: data.status,
+      severity: data.severity,
+      location: {
+        lat: data.lat ?? 0,
+        lng: data.lng ?? 0,
+        address: data.address ?? '',
+        city: data.city ?? '',
+      },
+      timestamp: data.created_at,
+      reporterId: data.reporter_id,
+      reporterName: data.reporter_name,
+      department: data.department,
+      evidenceUrls: data.evidence_urls ?? [],
+      aiResult: data.ai_result ?? undefined,
+      vehicleNumber: data.vehicle_number ?? undefined,
+      vehicleType: data.vehicle_type ?? undefined,
+    };
   },
 
   async updateReportStatus(id: string, status: Report['status']): Promise<void> {
-    const reports = loadReports();
-    const idx = reports.findIndex((r) => r.id === id);
-    if (idx >= 0) {
-      reports[idx].status = status;
-      saveReports(reports);
-    }
+    const { error } = await supabase
+      .from('reports')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) throw new Error(`Failed to update status: ${error.message}`);
   },
 
   async assignDepartment(id: string, department: string): Promise<void> {
-    const reports = loadReports();
-    const idx = reports.findIndex((r) => r.id === id);
-    if (idx >= 0) {
-      reports[idx].department = department;
-      reports[idx].status = 'assigned';
-      saveReports(reports);
-    }
+    const { error } = await supabase
+      .from('reports')
+      .update({ department, status: 'assigned', updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) throw new Error(`Failed to assign department: ${error.message}`);
   },
 
   async getDashboardStats(): Promise<{
@@ -362,61 +371,118 @@ export const reportService = {
     trafficCount: number;
     infrastructureCount: number;
   }> {
-    await delay(300);
-    const reports = loadReports();
+    const { data, error } = await supabase.from('reports').select('status, severity, category_group, created_at');
+    if (error) throw new Error(`Failed to load stats: ${error.message}`);
+
+    const reports = data ?? [];
     const today = new Date().toDateString();
     return {
-      todayCount: reports.filter((r) => new Date(r.timestamp).toDateString() === today).length,
-      pending: reports.filter((r) => r.status === 'pending' || r.status === 'ai-processing').length,
-      approved: reports.filter((r) => r.status === 'verified' || r.status === 'assigned' || r.status === 'under_progress' || r.status === 'resolved').length,
-      rejected: reports.filter((r) => r.status === 'rejected').length,
-      critical: reports.filter((r) => r.severity === 'critical').length,
-      trafficCount: reports.filter((r) => r.categoryGroup === 'traffic').length,
-      infrastructureCount: reports.filter((r) => r.categoryGroup === 'infrastructure').length,
+      todayCount: reports.filter((r: any) => new Date(r.created_at).toDateString() === today).length,
+      pending: reports.filter((r: any) => r.status === 'pending' || r.status === 'ai-processing').length,
+      approved: reports.filter((r: any) => r.status === 'verified' || r.status === 'assigned' || r.status === 'under_progress' || r.status === 'resolved').length,
+      rejected: reports.filter((r: any) => r.status === 'rejected').length,
+      critical: reports.filter((r: any) => r.severity === 'critical').length,
+      trafficCount: reports.filter((r: any) => r.category_group === 'traffic').length,
+      infrastructureCount: reports.filter((r: any) => r.category_group === 'infrastructure').length,
     };
   },
 };
 
-// ============ Notification Service ============
-
-function addNotification(data: Omit<Notification, 'id' | 'timestamp' | 'read'>) {
-  const notifs = loadNotifications();
-  notifs.unshift({
-    ...data,
-    id: `n${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    read: false,
-  });
-  saveNotifications(notifs);
-}
+// ============ Notification Service (Supabase only) ============
 
 export const notificationService = {
   async getNotifications(): Promise<Notification[]> {
-    await delay(200);
-    return loadNotifications();
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) return [];
+
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .or(`user_id.eq.${userData.user.id},recipient_type.eq.admin`)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.error('[notificationService.getNotifications] Query failed:', error.code, error.message);
+      return [];
+    }
+
+    return (data ?? []).map((n: any) => ({
+      id: n.id,
+      type: n.type,
+      title: n.title,
+      message: n.message,
+      reportId: n.report_id ?? undefined,
+      timestamp: n.created_at,
+      read: n.read ?? false,
+    }));
   },
 
   async markAsRead(id: string): Promise<void> {
-    const notifs = loadNotifications();
-    const idx = notifs.findIndex((n) => n.id === id);
-    if (idx >= 0) { notifs[idx].read = true; saveNotifications(notifs); }
+    const { error } = await supabase.from('notifications').update({ read: true }).eq('id', id);
+    if (error) console.error('[notificationService.markAsRead] Failed:', error.message);
   },
 
   async markAllRead(): Promise<void> {
-    const notifs = loadNotifications();
-    notifs.forEach((n) => (n.read = true));
-    saveNotifications(notifs);
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) return;
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read: true })
+      .or(`user_id.eq.${userData.user.id},recipient_type.eq.admin`);
+    if (error) console.error('[notificationService.markAllRead] Failed:', error.message);
   },
 };
 
-// ============ Gamification Service ============
+// ============ Gamification Service (Supabase only) ============
 
 export const gamificationService = {
-  async getBadges() { await delay(200); return MOCK_BADGES; },
-  async getRewards() { await delay(200); return MOCK_REWARDS; },
-  async getLeaderboard() { await delay(300); return MOCK_LEADERBOARD; },
-  async getTrustHistory() { await delay(200); return MOCK_TRUST_HISTORY; },
-  async getAnalytics() { await delay(400); return MOCK_ANALYTICS; },
+  async getBadges() {
+    const { data, error } = await supabase.from('badges').select('*').order('threshold');
+    if (error) return [];
+    return data ?? [];
+  },
+
+  async getRewards() {
+    const { data, error } = await supabase.from('rewards').select('*').order('points_required');
+    if (error) return [];
+    return data ?? [];
+  },
+
+  async getLeaderboard(): Promise<LeaderboardEntry[]> {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, full_name, points, trust_score, level, reports_verified, city')
+      .order('points', { ascending: false })
+      .limit(20);
+    if (error) return [];
+    return (data ?? []).map((p: any, i: number) => ({
+      rank: i + 1,
+      userId: p.id,
+      name: p.full_name ?? 'Anonymous',
+      points: p.points ?? 0,
+      level: p.level ?? 'Beginner',
+      reportsVerified: p.reports_verified ?? 0,
+      trustScore: p.trust_score ?? 0,
+      city: p.city ?? '',
+    }));
+  },
+
+  async getTrustHistory() {
+    const { data, error } = await supabase
+      .from('reward_history')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (error) return [];
+    return data ?? [];
+  },
+
+  async getAnalytics() {
+    const { data, error } = await supabase.from('reports').select('status, severity, category_group, created_at');
+    if (error) return { totalReports: 0, resolvedReports: 0, pendingReports: 0 };
+    return data ?? [];
+  },
 };
 
 export { redemptionService } from '@/services/redemptionService';
