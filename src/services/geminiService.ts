@@ -200,6 +200,102 @@ async function uploadAudio(blob: Blob, userId: string): Promise<{ url: string; p
   return { url: data.publicUrl, path: filePath };
 }
 
+/**
+ * Builds a locally-derived analysis result when the AI edge function is
+ * unavailable. Uses the reporter's selected category + text description to
+ * produce a meaningful classification, severity rating, and confidence score
+ * instead of a generic hardcoded fallback.
+ */
+function buildLocalAnalysis(context: {
+  category: string;
+  categoryGroup: string;
+  description: string;
+  title: string;
+  lat: number;
+  lng: number;
+  city: string;
+}): GeminiImageAnalysisResult {
+  const cat = context.category || 'other';
+  const group = context.categoryGroup || 'infrastructure';
+  const title = context.title || '';
+  const desc = context.description || '';
+
+  // Severity heuristics based on category and keyword signals in the text
+  const text = `${title} ${desc}`.toLowerCase();
+  const criticalKeywords = ['critical', 'severe', 'danger', 'accident', 'fire', 'flood', 'collapse', 'urgent', 'immediate'];
+  const highKeywords = ['major', 'large', 'deep', 'broken', 'damaged', 'blocked', 'heavy', 'serious'];
+  const lowKeywords = ['minor', 'small', 'slight', 'minor', 'cosmetic', 'minor crack'];
+
+  let severity: GeminiImageAnalysisResult['severity'] = 'medium';
+  let priority = 55;
+  let confidence = 0.72;
+
+  if (criticalKeywords.some((k) => text.includes(k))) {
+    severity = 'critical';
+    priority = 90;
+    confidence = 0.78;
+  } else if (highKeywords.some((k) => text.includes(k))) {
+    severity = 'high';
+    priority = 72;
+    confidence = 0.75;
+  } else if (lowKeywords.some((k) => text.includes(k))) {
+    severity = 'low';
+    priority = 30;
+    confidence = 0.7;
+  } else {
+    // Category-based default severity
+    const criticalCats = ['wrong-side-driving', 'dangerous-driving', 'signal-jumping'];
+    const highCats = ['pothole', 'road-crack', 'open-drain', 'traffic-signal-damage', 'illegal-construction', 'helmet-missing', 'triple-riding'];
+    const lowCats = ['garbage', 'broken-streetlight'];
+    if (criticalCats.includes(cat)) { severity = 'critical'; priority = 88; }
+    else if (highCats.includes(cat)) { severity = 'high'; priority = 70; }
+    else if (lowCats.includes(cat)) { severity = 'low'; priority = 35; }
+  }
+
+  const isTraffic = group === 'traffic';
+  const imageCategory = isTraffic ? 'traffic-scene' : 'infrastructure-scene';
+  const detectedViolation = isTraffic ? cat : null;
+  const vehicleType = isTraffic ? null : null;
+
+  const severityExplanation = severity === 'critical'
+    ? 'High-risk issue flagged from the report description — requires immediate attention.'
+    : severity === 'high'
+      ? 'Significant issue identified from the report details — prompt action recommended.'
+      : severity === 'low'
+        ? 'Minor issue based on the report description — routine handling.'
+        : 'Moderate issue identified from the report details.';
+
+  const description = desc
+    ? desc.slice(0, 200)
+    : `${cat.replace(/-/g, ' ')} reported at ${context.city || 'the reported location'}.`;
+
+  return {
+    isRelevant: true,
+    invalidImageType: null,
+    imageCategory,
+    vehicleType,
+    vehicleNumber: null,
+    issue: cat,
+    detectedViolation,
+    confidence,
+    severity,
+    severityExplanation,
+    priority,
+    description,
+    reason: 'Image passed local validation. Classification derived from the report category and description (AI vision service was unavailable).',
+    detectedObjects: [{ label: cat, confidence }],
+    imageAuthenticity: {
+      isGenuine: true,
+      manipulationFlags: [],
+      authenticityConfidence: 0.6,
+    },
+    evidenceQuality: 0.65,
+    recommendedAction: `Route to the ${isTraffic ? 'traffic' : 'municipal'} department for inspection and follow-up.`,
+    duplicateProbability: 0,
+    duplicateOf: null,
+  };
+}
+
 export const geminiService = {
   /**
    * Sends an image for visual analysis. Checks for selfies, portraits, and
@@ -289,32 +385,11 @@ export const geminiService = {
       return result;
     }
 
-    // Fallback if AI backend unavailable and local check passed
-    return {
-      isRelevant: true,
-      invalidImageType: null,
-      imageCategory: 'infrastructure-scene',
-      vehicleType: null,
-      vehicleNumber: null,
-      issue: context.category || 'pothole',
-      detectedViolation: null,
-      confidence: 0.88,
-      severity: 'medium',
-      severityExplanation: 'Reported issue visual assessment.',
-      priority: 65,
-      description: context.description || `${context.category || 'Issue'} reported at location.`,
-      reason: 'Image verified as relevant evidence.',
-      detectedObjects: [],
-      imageAuthenticity: {
-        isGenuine: true,
-        manipulationFlags: [],
-        authenticityConfidence: 0.8,
-      },
-      evidenceQuality: 0.8,
-      recommendedAction: 'Route to appropriate department for review.',
-      duplicateProbability: 0,
-      duplicateOf: null,
-    };
+    // Fallback if AI backend unavailable and local check passed.
+    // Derive a meaningful classification from the reporter's category +
+    // text description so the result is accurate to the actual report
+    // rather than a generic hardcoded "pothole" assessment.
+    return buildLocalAnalysis(context);
   },
 
   /**
