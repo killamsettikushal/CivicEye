@@ -1,8 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   FileText, Clock, CheckCircle2, XCircle, AlertTriangle, Search,
   Eye, Check, X, Route, Download, Filter, Inbox, ChevronDown,
+  MapPin, Navigation, ArrowUpDown, ImageIcon,
 } from 'lucide-react';
 import { Drawer } from '@/components/ui/Drawer';
 import { Modal } from '@/components/ui/Modal';
@@ -10,8 +12,11 @@ import { TableSkeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/StatCard';
 import { adminReportService, type AdminReport, type AdminReportStats } from '@/services/adminReportService';
 import { useToast } from '@/contexts/ToastContext';
+import { useRealtimeTable } from '@/hooks/useRealtimeTable';
 import { CATEGORY_LABELS, STATUS_LABELS, DEPARTMENTS, SEVERITY_COLORS } from '@/data/mockData';
 import { formatDateTime, timeAgo } from '@/utils/helpers';
+
+const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All Statuses' },
@@ -72,6 +77,10 @@ export function AdminReportsPanel() {
   const [adminNotes, setAdminNotes] = useState('');
   const [statusModalOpen, setStatusModalOpen] = useState(false);
   const [statusModalReport, setStatusModalReport] = useState<AdminReport | null>(null);
+  const [sortBySeverity, setSortBySeverity] = useState(true);
+  const [sortByDistance, setSortByDistance] = useState(false);
+  const [adminLocation, setAdminLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const navigate = useNavigate();
 
   const loadReports = useCallback(async () => {
     setLoading(true);
@@ -94,6 +103,44 @@ export function AdminReportsPanel() {
   }, [statusFilter, severityFilter, search, showToast]);
 
   useEffect(() => { loadReports(); }, [loadReports]);
+
+  // ── Realtime: auto-refresh report list when any report changes ──
+  useRealtimeTable('reports', () => {
+    console.log('[AdminReportsPanel] Realtime update — reloading reports');
+    loadReports();
+  }, undefined);
+
+  // ── Request admin's GPS location for distance sorting ──
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => setAdminLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => console.log('[AdminReportsPanel] GPS location unavailable'),
+      );
+    }
+  }, []);
+
+  // ── Sort reports by severity (Critical → Low) and optionally by distance ──
+  const sortedReports = [...reports].sort((a, b) => {
+    if (sortByDistance && adminLocation && a.lat && a.lng && b.lat && b.lng) {
+      const distA = haversine(adminLocation.lat, adminLocation.lng, a.lat, a.lng);
+      const distB = haversine(adminLocation.lat, adminLocation.lng, b.lat, b.lng);
+      return distA - distB;
+    }
+    if (sortBySeverity) {
+      return (SEVERITY_ORDER[a.severity] ?? 2) - (SEVERITY_ORDER[b.severity] ?? 2);
+    }
+    return 0;
+  });
+
+  const haversine = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+    const R = 6371000;
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  };
 
   const openDrawer = (report: AdminReport) => {
     setSelected(report);
@@ -227,6 +274,29 @@ export function AdminReportsPanel() {
             </select>
             <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
           </div>
+          <button
+            onClick={() => { setSortBySeverity(!sortBySeverity); setSortByDistance(false); }}
+            className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors flex items-center gap-1.5 ${
+              sortBySeverity
+                ? 'border-blue-500 bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+            }`}
+            title="Sort by AI severity (Critical → Low)"
+          >
+            <ArrowUpDown className="w-4 h-4" /> Severity
+          </button>
+          <button
+            onClick={() => { setSortByDistance(!sortByDistance); setSortBySeverity(false); }}
+            disabled={!adminLocation}
+            className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors flex items-center gap-1.5 disabled:opacity-40 ${
+              sortByDistance
+                ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+            }`}
+            title={adminLocation ? 'Sort by distance from your location' : 'Enable GPS to sort by distance'}
+          >
+            <Navigation className="w-4 h-4" /> Distance
+          </button>
         </div>
       </div>
 
@@ -234,7 +304,7 @@ export function AdminReportsPanel() {
       <div className="glass-card overflow-hidden">
         {loading ? (
           <div className="p-5"><TableSkeleton rows={6} /></div>
-        ) : reports.length === 0 ? (
+        ) : sortedReports.length === 0 ? (
           <EmptyState icon={Inbox} title="No reports found" description="No reports match your current filters. Try adjusting your search or filters." />
         ) : (
           <>
@@ -253,7 +323,7 @@ export function AdminReportsPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {reports.map((report, i) => (
+                  {sortedReports.map((report, i) => (
                     <motion.tr
                       key={report.id}
                       initial={{ opacity: 0 }}
@@ -290,7 +360,7 @@ export function AdminReportsPanel() {
 
             {/* Mobile cards */}
             <div className="lg:hidden divide-y divide-slate-100 dark:divide-slate-800">
-              {reports.map((report, i) => (
+              {sortedReports.map((report, i) => (
                 <motion.div key={report.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }} className="p-4">
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div>
@@ -319,6 +389,22 @@ export function AdminReportsPanel() {
       <Drawer isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} title={selected?.incident_id ?? ''}>
         {selected && (
           <div className="space-y-5">
+            {/* Evidence images */}
+            {selected.evidence_urls && selected.evidence_urls.length > 0 && (
+              <div>
+                <p className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-2 flex items-center gap-1.5">
+                  <ImageIcon className="w-4 h-4" /> Evidence Images ({selected.evidence_urls.length})
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {selected.evidence_urls.map((url, i) => (
+                    <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="block aspect-square rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:opacity-80 transition-opacity">
+                      <img src={url} alt={`Evidence ${i + 1}`} className="w-full h-full object-cover" />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div>
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">{selected.title}</h3>
               <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{selected.description}</p>
@@ -330,6 +416,7 @@ export function AdminReportsPanel() {
               <InfoBox label="Status" value={STATUS_LABELS[selected.status] ?? selected.status} />
               <InfoBox label="Department" value={selected.department || 'Unassigned'} />
               <InfoBox label="Location" value={selected.address || 'N/A'} />
+              <InfoBox label="Coordinates" value={selected.lat && selected.lng ? `${selected.lat.toFixed(4)}, ${selected.lng.toFixed(4)}` : 'N/A'} />
               <InfoBox label="Submitted" value={formatDateTime(selected.created_at)} />
               {selected.vehicle_number && <InfoBox label="Vehicle Number" value={selected.vehicle_number} />}
               {selected.vehicle_type && <InfoBox label="Vehicle Type" value={selected.vehicle_type} />}
@@ -405,6 +492,17 @@ export function AdminReportsPanel() {
                 <X className="w-4 h-4" /> Reject
               </button>
             </div>
+            <button onClick={() => handleStatusChange(selected.id, 'resolved')} className="btn-primary w-full !bg-blue-600 !from-blue-600 !to-blue-500">
+              <CheckCircle2 className="w-4 h-4" /> Mark as Resolved
+            </button>
+            {selected.lat && selected.lng && (
+              <button
+                onClick={() => navigate(`/map?lat=${selected.lat}&lng=${selected.lng}&id=${selected.incident_id}`)}
+                className="btn-ghost w-full"
+              >
+                <MapPin className="w-4 h-4" /> View on Map
+              </button>
+            )}
             <button onClick={() => handleDownload(selected)} className="btn-ghost w-full">
               <Download className="w-4 h-4" /> Download Report
             </button>

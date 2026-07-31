@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Shield, FileText, Users, Mic } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageLoader } from '@/components/ui/Skeleton';
 import { ErrorState } from '@/components/ui/StatCard';
-import { adminReportService } from '@/services/adminReportService';
 import { AdminReportsPanel } from '@/components/admin/AdminReportsPanel';
 import { AdminUsersPanel } from '@/components/admin/AdminUsersPanel';
 import { AdminVoiceComplaintsPanel } from '@/components/admin/AdminVoiceComplaintsPanel';
+import { useAdminAuth } from '@/hooks/useAdminAuth';
 
 type Tab = 'reports' | 'voice' | 'users';
 
@@ -18,26 +18,12 @@ const TABS: { id: Tab; label: string; icon: any }[] = [
 ];
 
 export function AdminPortalPage() {
-  const [adminChecking, setAdminChecking] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const admin = useAdminAuth();
   const [activeTab, setActiveTab] = useState<Tab>('reports');
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const admin = await adminReportService.isAdmin();
-        setIsAdmin(admin);
-      } catch {
-        setIsAdmin(false);
-      } finally {
-        setAdminChecking(false);
-      }
-    })();
-  }, []);
+  if (admin.status === 'checking') return <PageLoader />;
 
-  if (adminChecking) return <PageLoader />;
-
-  if (!isAdmin) {
+  if (admin.status === 'denied') {
     return (
       <DashboardLayout>
         <ErrorState

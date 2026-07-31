@@ -29,6 +29,7 @@ import { CommunityPage } from '@/pages/CommunityPage';
 import { AdminDebugPage } from '@/pages/AdminDebugPage';
 import { AIAnalyzerPage } from '@/pages/AIAnalyzerPage';
 import { ErrorBoundary, ErrorFallback } from '@/components/ui/ErrorBoundary';
+import { useAdminAuth } from '@/hooks/useAdminAuth';
 
 function FullPageLoader() {
   return (
@@ -59,25 +60,23 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
 
 /**
  * Protects a route so only ADMIN users can access it.
- * Does NOT redirect until the profile (and thus role) is fully loaded.
+ * Uses the centralized useAdminAuth hook so every admin page validates
+ * the role through one method — no per-page isAdmin() calls.
  */
 function AdminRoute({ children }: { children: ReactNode }) {
-  const { isAuthenticated, user, loading, profileLoading } = useAuth();
+  const admin = useAdminAuth();
+  const { isAuthenticated } = useAuth();
 
-  if (loading || profileLoading) return <FullPageLoader />;
-  if (!isAuthenticated) {
-    console.log('[Router] AdminRoute → redirect to /login (not authenticated)');
-    return <Navigate to="/login" replace />;
-  }
-
-  // Super-admin override: admin@civiceye.gov is always granted access,
-  // even if the profile row hasn't loaded correctly or role is mismatched.
-  const isAdminEmail = user?.email?.toLowerCase() === 'admin@civiceye.gov';
-  if (user?.role !== 'admin' && !isAdminEmail) {
-    console.log('[Router] AdminRoute → redirect to /admin/access-denied (role is not admin, got:', user?.role, ')');
+  if (admin.status === 'checking') return <FullPageLoader />;
+  if (admin.status === 'denied') {
+    if (!isAuthenticated) {
+      console.log('[Router] AdminRoute → redirect to /login (not authenticated)');
+      return <Navigate to="/login" replace />;
+    }
+    console.log('[Router] AdminRoute → redirect to /admin/access-denied (role is not admin)');
     return <Navigate to="/admin/access-denied" replace />;
   }
-  console.log('[Router] AdminRoute → rendering admin page for user:', user?.username, '| role:', user?.role, '| adminOverride:', isAdminEmail && user?.role !== 'admin');
+  console.log('[Router] AdminRoute → rendering admin page for user:', admin.user?.username, '| role:', admin.user?.role);
   return <>{children}</>;
 }
 
@@ -150,11 +149,14 @@ function AppRoutes() {
       <Route path="/community" element={<ProtectedRoute><CommunityPage /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
 
-      {/* Admin-only routes */}
+      {/* Admin-only routes — all protected by the centralized AdminRoute */}
       <Route path="/admin/login" element={<PublicOnlyRoute><AdminLoginPage /></PublicOnlyRoute>} />
       <Route path="/admin/access-denied" element={<AccessDeniedPage />} />
       <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
+      <Route path="/admin/dashboard" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
       <Route path="/admin/portal" element={<AdminRoute><AdminPortalPage /></AdminRoute>} />
+      <Route path="/admin/reports" element={<AdminRoute><AdminPortalPage /></AdminRoute>} />
+      <Route path="/admin/analytics" element={<AdminRoute><AnalyticsPage /></AdminRoute>} />
       <Route path="/admin/debug" element={<AdminRoute><AdminDebugPage /></AdminRoute>} />
 
       <Route path="*" element={<Navigate to="/" replace />} />

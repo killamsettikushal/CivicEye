@@ -126,6 +126,7 @@ export const MOCK_REPORTS: Report[] = [
     department: 'Municipal Engineering', evidenceUrls: [],
     vehicleNumber: undefined,
     aiResult: {
+      isRelevant: true, priority: 75, description: 'Large pothole detected on MG Road near Trinity Circle.', reason: 'Valid infrastructure issue detected with high confidence.',
       detectedObjects: [{ label: 'pothole', confidence: 0.94, bbox: { x: 120, y: 180, width: 200, height: 80 } }],
       confidenceScore: 0.94, severity: 'high', duplicateProbability: 0.12, evidenceQuality: 0.88,
       recommendedAction: 'Immediate repair required. Assign to Municipal Engineering with priority.',
@@ -142,6 +143,7 @@ export const MOCK_REPORTS: Report[] = [
     department: 'Traffic Police', evidenceUrls: [],
     vehicleNumber: 'KA01 AB 1234', vehicleType: 'Motorcycle',
     aiResult: {
+      isRelevant: true, priority: 60, description: 'Rider without helmet detected on motorcycle at signal.', reason: 'Valid traffic violation detected with clear evidence.',
       detectedObjects: [{ label: 'person', confidence: 0.97, bbox: { x: 80, y: 60, width: 120, height: 180 } }, { label: 'motorcycle', confidence: 0.95, bbox: { x: 60, y: 140, width: 160, height: 100 } }],
       vehicleNumber: 'KA01 AB 1234', vehicleType: 'Motorcycle', detectedViolation: 'Helmet Missing',
       confidenceScore: 0.91, severity: 'medium', duplicateProbability: 0.05, evidenceQuality: 0.85,
@@ -158,6 +160,7 @@ export const MOCK_REPORTS: Report[] = [
     timestamp: hoursAgo(24), reporterId: 'u1', reporterName: 'Aarav Sharma',
     department: 'Sanitation Department', evidenceUrls: [],
     aiResult: {
+      isRelevant: true, priority: 50, description: 'Large garbage pile detected near park entrance.', reason: 'Valid infrastructure issue — sanitation hazard detected.',
       detectedObjects: [{ label: 'garbage-pile', confidence: 0.89, bbox: { x: 50, y: 100, width: 300, height: 200 } }],
       confidenceScore: 0.89, severity: 'medium', duplicateProbability: 0.22, evidenceQuality: 0.78,
       recommendedAction: 'Dispatch sanitation team for cleanup. Monitor for recurring dumping.',
@@ -173,6 +176,7 @@ export const MOCK_REPORTS: Report[] = [
     timestamp: hoursAgo(48), reporterId: 'u2', reporterName: 'Priya Patel',
     department: 'Electrical Department', evidenceUrls: [],
     aiResult: {
+      isRelevant: true, priority: 72, description: 'Non-functional streetlights detected on ORR stretch.', reason: 'Valid infrastructure issue — public safety hazard at night.',
       detectedObjects: [{ label: 'streetlight', confidence: 0.92, bbox: { x: 200, y: 50, width: 40, height: 120 } }],
       confidenceScore: 0.92, severity: 'high', duplicateProbability: 0.08, evidenceQuality: 0.90,
       recommendedAction: 'Urgent repair needed. High accident risk at night.',
@@ -189,6 +193,7 @@ export const MOCK_REPORTS: Report[] = [
     department: 'Traffic Police', evidenceUrls: [],
     vehicleNumber: 'KA05 MN 5678', vehicleType: 'Car',
     aiResult: {
+      isRelevant: true, priority: 90, description: 'Car driving wrong side on flyover ramp.', reason: 'Critical traffic violation detected with clear vehicle identification.',
       detectedObjects: [{ label: 'car', confidence: 0.96, bbox: { x: 100, y: 120, width: 180, height: 120 } }],
       vehicleNumber: 'KA05 MN 5678', vehicleType: 'Car', detectedViolation: 'Wrong Side Driving',
       confidenceScore: 0.93, severity: 'critical', duplicateProbability: 0.03, evidenceQuality: 0.91,
@@ -214,6 +219,7 @@ export const MOCK_REPORTS: Report[] = [
     department: 'Enforcement Cell', evidenceUrls: [],
     vehicleNumber: 'Multiple', vehicleType: 'Various',
     aiResult: {
+      isRelevant: true, priority: 35, description: 'Multiple vehicles parked on footpath blocking pedestrian path.', reason: 'Valid traffic violation — illegal parking detected.',
       detectedObjects: [{ label: 'car', confidence: 0.88, bbox: { x: 50, y: 100, width: 100, height: 80 } }],
       vehicleType: 'Various', detectedViolation: 'Illegal Parking',
       confidenceScore: 0.86, severity: 'low', duplicateProbability: 0.15, evidenceQuality: 0.80,
@@ -230,6 +236,7 @@ export const MOCK_REPORTS: Report[] = [
     timestamp: hoursAgo(72), reporterId: 'u2', reporterName: 'Priya Patel',
     department: 'Sanitation Department', evidenceUrls: [],
     aiResult: {
+      isRelevant: true, priority: 65, description: 'Possible open drain detected but image quality is insufficient.', reason: 'Likely valid infrastructure issue but low evidence quality.',
       detectedObjects: [{ label: 'drain', confidence: 0.72, bbox: { x: 150, y: 200, width: 180, height: 60 } }],
       confidenceScore: 0.72, severity: 'high', duplicateProbability: 0.45, evidenceQuality: 0.55,
       recommendedAction: 'Insufficient evidence quality. Request resubmission with clearer photo.',
@@ -246,6 +253,7 @@ export const MOCK_REPORTS: Report[] = [
     department: 'Traffic Police', evidenceUrls: [],
     vehicleNumber: 'KA03 XY 9012', vehicleType: 'Motorcycle',
     aiResult: {
+      isRelevant: true, priority: 78, description: 'Three persons on a single motorcycle detected on flyover.', reason: 'Valid traffic violation — triple riding detected with clear evidence.',
       detectedObjects: [{ label: 'person', confidence: 0.95, bbox: { x: 100, y: 50, width: 80, height: 120 } }, { label: 'person', confidence: 0.93, bbox: { x: 140, y: 70, width: 70, height: 100 } }, { label: 'motorcycle', confidence: 0.96, bbox: { x: 80, y: 130, width: 140, height: 90 } }],
       vehicleNumber: 'KA03 XY 9012', vehicleType: 'Motorcycle', detectedViolation: 'Triple Riding',
       confidenceScore: 0.90, severity: 'high', duplicateProbability: 0.07, evidenceQuality: 0.87,
@@ -263,6 +271,7 @@ export const MOCK_REPORTS: Report[] = [
     department: 'Municipal Engineering', evidenceUrls: [],
     duplicateOf: 'r1', clusterId: 'CL-001',
     aiResult: {
+      isRelevant: true, priority: 88, description: 'Multiple potholes causing severe traffic congestion at junction.', reason: 'Valid infrastructure issue — high-severity duplicate detected.',
       detectedObjects: [{ label: 'pothole', confidence: 0.96, bbox: { x: 80, y: 150, width: 150, height: 70 } }],
       confidenceScore: 0.96, severity: 'critical', duplicateProbability: 0.78, evidenceQuality: 0.92,
       recommendedAction: 'Duplicate of CIVIC-2025-0001. Merge reports and expedite repair.',

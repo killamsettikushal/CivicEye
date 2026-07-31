@@ -135,7 +135,7 @@ export function AdminVoiceComplaintsPanel() {
                     {row.category && <span className="capitalize">{row.category.replace(/-/g, ' ')}</span>}
                     {row.department && <span className="flex items-center gap-1"><Building2 className="w-3 h-3" /> {row.department}</span>}
                     {row.priority_score != null && <span className="flex items-center gap-1"><Gauge className="w-3 h-3" /> {row.priority_score}/100</span>}
-                    <span>{new Date(row.created_at).toLocaleDateString('en-IN', { day: 'short', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                    <span>{new Date(row.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                   </p>
                 </div>
               </div>

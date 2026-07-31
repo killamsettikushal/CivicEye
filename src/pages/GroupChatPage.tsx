@@ -1,10 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  ArrowLeft, Send, Image as ImageIcon, Paperclip, Mic, Smile,
-  Pin, Search, X, Reply, Trash2, Edit2, Check,
-  Users, Settings, BadgeCheck, CheckCheck, Play, Pause,
-} from 'lucide-react';
+import { ArrowLeft, Send, Image as ImageIcon, Paperclip, Mic, Smile, Pin, Search, X, Reply, Trash2, CreditCard as Edit2, Check, Users, Settings, BadgeCheck, CheckCheck, Play, Pause, Plus } from 'lucide-react';
 import type { ChatMessage, ChatReactionType, GroupMember, UserSearchResult, CommunityGroup } from '@/types';
 import { groupChatService } from '@/services/groupChatService';
 import { useAuth } from '@/contexts/AuthContext';

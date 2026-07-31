@@ -139,12 +139,12 @@ export const adminReportService = {
    * Other status changes (assigned, under_progress, pending) use a plain update.
    */
   async updateReportStatus(id: string, status: string): Promise<void> {
-    const actionMap: Record<string, string> = {
+    const actionMap: Record<string, 'verify' | 'resolve' | 'reject'> = {
       verified: 'verify',
       resolved: 'resolve',
       rejected: 'reject',
     };
-    const rpcAction = actionMap[status];
+    const rpcAction = actionMap[status] as 'verify' | 'resolve' | 'reject' | undefined;
 
     if (rpcAction) {
       const result = await this.verifyAndReward(id, rpcAction);

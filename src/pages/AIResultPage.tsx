@@ -17,6 +17,7 @@ import { rtoService, type VehicleRTODetails } from '@/services/rtoService';
 export function AIResultPage() {
   const { reportId } = useParams<{ reportId: string }>();
   const navigate = useNavigate();
+  const { showToast } = useToast();
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
   const [rtoDetails, setRtoDetails] = useState<VehicleRTODetails | null>(null);

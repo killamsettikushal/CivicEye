@@ -152,7 +152,11 @@ export async function processReport(
     priority: analysis.priority,
     description: analysis.description,
     reason: analysis.reason,
-    detectedObjects: analysis.detectedObjects ?? [],
+    detectedObjects: analysis.detectedObjects?.map((o: any) => ({
+      label: o.label,
+      confidence: o.confidence,
+      bbox: o.bbox ?? { x: 0, y: 0, width: 0, height: 0 },
+    })) ?? [],
     imageAuthenticity,
     evidenceQuality: analysis.evidenceQuality,
     recommendedAction: analysis.recommendedAction,
@@ -198,26 +202,38 @@ export const reportService = {
     reports.unshift(report);
     saveReports(reports);
 
-    // Also persist to Supabase so the admin portal can receive it
+    // Persist to Supabase so the admin portal can receive it in real time
     try {
-      await supabase.from('reports').insert({
-        incident_id: incidentId,
-        reporter_id: supaUser.user?.id ?? null,
-        reporter_name: reporterName,
-        category: data.category,
-        category_group: getCategoryGroup(data.category),
-        title: data.title,
-        description: data.description,
-        status: 'ai-processing',
-        severity: 'medium',
-        department: getDepartmentForCategory(data.category),
-        lat: data.location.lat,
-        lng: data.location.lng,
-        address: data.location.address,
-        city: data.location.city,
-        evidence_urls: data.evidenceUrls,
-      });
-    } catch { /* localStorage copy is the fallback */ }
+      const { data: insertedRow, error: insertError } = await supabase
+        .from('reports')
+        .insert({
+          incident_id: incidentId,
+          reporter_id: supaUser.user?.id ?? null,
+          reporter_name: reporterName,
+          category: data.category,
+          category_group: getCategoryGroup(data.category),
+          title: data.title,
+          description: data.description,
+          status: 'ai-processing',
+          severity: 'medium',
+          department: getDepartmentForCategory(data.category),
+          lat: data.location.lat,
+          lng: data.location.lng,
+          address: data.location.address,
+          city: data.location.city,
+          evidence_urls: data.evidenceUrls,
+        })
+        .select('id')
+        .single();
+
+      if (insertError) {
+        console.error('[reportService.createReport] Supabase insert failed:', insertError.code, insertError.message);
+      } else {
+        console.log('[reportService.createReport] Report persisted to Supabase with id:', insertedRow?.id);
+      }
+    } catch (err) {
+      console.error('[reportService.createReport] Supabase insert threw:', err);
+    }
 
     addNotification({
       type: 'report-submitted',
@@ -254,19 +270,28 @@ export const reportService = {
       // Sync AI result + status to Supabase
       try {
         const newStatus = aiResult.duplicateProbability > 0.6 ? 'rejected' : 'verified';
-        await supabase
+        const { error: updateError } = await supabase
           .from('reports')
           .update({
             status: newStatus,
             severity: aiResult.severity,
-        severity_explanation: aiResult.severityExplanation ?? null,
+            severity_explanation: aiResult.severityExplanation ?? null,
             ai_result: aiResult as any,
             vehicle_number: aiResult.vehicleNumber ?? null,
             vehicle_type: aiResult.vehicleType ?? null,
+            fraud_score: aiResult.duplicateProbability > 0.6 ? Math.round(aiResult.duplicateProbability * 100) : 0,
             updated_at: new Date().toISOString(),
           })
           .eq('incident_id', reports[idx].incidentId);
-      } catch { /* localStorage copy is the fallback */ }
+
+        if (updateError) {
+          console.error('[updateReportWithAI] Supabase update failed:', updateError.code, updateError.message);
+        } else {
+          console.log('[updateReportWithAI] AI result synced to Supabase for incident:', reports[idx].incidentId, '| status:', newStatus, '| severity:', aiResult.severity);
+        }
+      } catch (err) {
+        console.error('[updateReportWithAI] Supabase update threw:', err);
+      }
 
       addNotification({
         type: 'ai-completed',

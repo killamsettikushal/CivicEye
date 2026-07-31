@@ -240,11 +240,20 @@ export function ReportSubmissionPage() {
       return false;
     }
     if (step === 3) return title.length > 0 && description.length > 0;
+    if (step === 4) return evidence.length > 0 && !imageRejected;
     return true;
   };
 
   const handleSubmit = async () => {
     if (!category || !location || !user) return;
+    if (evidence.length === 0) {
+      showToast('Please upload at least one photo as evidence. AI analysis is required.', 'error');
+      return;
+    }
+    if (imageRejected) {
+      showToast('The uploaded image was rejected by AI validation. Please upload a valid civic issue photo.', 'error');
+      return;
+    }
     setSubmitting(true);
     try {
       // If voice complaint, save the raw audio + typed complaint to voice_complaints table
@@ -429,17 +438,18 @@ export function ReportSubmissionPage() {
 
             {/* Evidence upload (shared for both modes) */}
             <div className="mt-6 pt-6 border-t border-slate-200 dark:border-slate-700">
-              <p className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-3">Add Photo/Video Evidence (Optional)</p>
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-3">Add Photo Evidence <span className="text-red-500">(Required)</span></p>
+              <p className="text-xs text-slate-400 mb-3">AI will analyze your photo to classify the issue, detect duplicates, and reject invalid images. Report submission is disabled until a valid photo is uploaded.</p>
               <div className="grid sm:grid-cols-2 gap-3 mb-4">
                 <label className="glass-card glass-card-hover p-4 flex items-center gap-3 cursor-pointer text-center">
                   <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-500/10 flex items-center justify-center flex-shrink-0">
                     {uploading ? <Loader2 className="w-5 h-5 text-blue-600 dark:text-blue-400 animate-spin" /> : <Upload className="w-5 h-5 text-blue-600 dark:text-blue-400" />}
                   </div>
                   <div>
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{uploading ? 'Uploading...' : 'Upload File'}</span>
-                    <p className="text-xs text-slate-400">Photo or Video</p>
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{uploading ? 'Uploading...' : 'Upload Photo'}</span>
+                    <p className="text-xs text-slate-400">JPEG, PNG, or WebP</p>
                   </div>
-                  <input ref={fileInputRef} type="file" accept="image/*,video/*" multiple onChange={handleFileSelect} className="hidden" />
+                  <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={handleFileSelect} className="hidden" />
                 </label>
 
                 <button onClick={() => setCameraOpen(true)} disabled={uploading} className="glass-card glass-card-hover p-4 flex items-center gap-3 text-center disabled:opacity-50">
@@ -659,8 +669,8 @@ export function ReportSubmissionPage() {
 
             <div className="mt-6 flex justify-between">
               <button onClick={() => setStep(1)} className="btn-ghost">Back</button>
-              <button onClick={() => setStep(3)} disabled={!canProceed() || imageRejected} className="btn-primary disabled:opacity-50">
-                {imageRejected ? 'Upload valid image to continue' : 'Continue'} <ChevronRight className="w-4 h-4" />
+              <button onClick={() => setStep(3)} disabled={!canProceed() || imageRejected || evidence.length === 0 || imageAnalyzing} className="btn-primary disabled:opacity-50">
+                {imageAnalyzing ? 'Analyzing...' : imageRejected ? 'Upload valid image to continue' : evidence.length === 0 ? 'Upload a photo to continue' : 'Continue'} <ChevronRight className="w-4 h-4" />
               </button>
             </div>
           </motion.div>

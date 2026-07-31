@@ -271,7 +271,7 @@ function buildLocalAnalysis(context: {
 
   return {
     isRelevant: true,
-    invalidImageType: null,
+    invalidImageType: undefined,
     imageCategory,
     vehicleType,
     vehicleNumber: null,

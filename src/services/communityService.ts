@@ -330,7 +330,7 @@ async function buildPosts(
       fetchMutedPostIds(postIds, userId),
       fetchBlockedUserIds(userId),
       fetchPostReactions(postIds, userId),
-      fetchGroupNames(rows.map((r) => r.group_id)),
+      fetchGroupNames(rows.map((r) => r.group_id).filter((id): id is string => id != null)),
     ]);
 
   const pollIds = [...pollMap.values()].map((p: any) => p.id);
@@ -1228,6 +1228,7 @@ export const communityService = {
     body: string;
     media: CommunityMedia[];
     locationName?: string;
+    landmark?: string;
     lat?: number;
     lng?: number;
     pollData?: any;
