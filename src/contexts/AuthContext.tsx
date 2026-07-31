@@ -24,19 +24,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let mounted = true;
 
-    const fetchProfile = async (userId: string): Promise<AuthUser | null> => {
+    let profileFetchInFlight = false;
+
+    const fetchProfile = async (): Promise<AuthUser | null> => {
+      if (profileFetchInFlight) return null;
+      profileFetchInFlight = true;
       setProfileLoading(true);
       try {
         const currentUser = await authService.getCurrentUser();
         return currentUser;
       } catch (err: any) {
         console.error('[AuthContext] Failed to fetch profile:', err?.message);
-        // Surface the error to the user via the toast system if available,
-        // but we can't access useToast here (it's outside the provider tree).
-        // The error is logged and the user is returned as null so route guards
-        // redirect to /login with a clear console trace.
+        // Do NOT sign the user out here — a transient DB/RLS error should not
+        // destroy the session. Route guards will keep them on a loader until
+        // a retry succeeds or the user explicitly logs out.
         return null;
       } finally {
+        profileFetchInFlight = false;
         if (mounted) setProfileLoading(false);
       }
     };
@@ -50,7 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (session?.user) {
           console.log('[AuthContext] Session found on mount for user:', session.user.id);
-          const currentUser = await fetchProfile(session.user.id);
+          const currentUser = await fetchProfile();
           if (mounted) {
             setUser(currentUser);
             console.log('[AuthContext] Profile loaded:', currentUser?.role, currentUser?.username);
@@ -75,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // During registration, signUp fires SIGNED_IN immediately.
           // We must wait for the profile to be created by the trigger before
           // allowing route guards to redirect based on role.
-          const currentUser = await fetchProfile(session.user.id);
+          const currentUser = await fetchProfile();
           if (mounted) {
             setUser(currentUser);
             console.log('[AuthContext] Profile loaded after auth event:', currentUser?.role);

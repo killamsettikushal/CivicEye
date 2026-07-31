@@ -157,33 +157,36 @@ export const authService = {
     console.log('[authService] user.id:', authData.user.id);
     console.log('[authService] user.email:', authData.user.email);
 
-    // Step 3: Fetch from public.profiles using .select("*").eq("id", user.id).single()
-    const { data: profileData, error: profileError } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', authData.user.id)
-      .single();
+    // Step 3: Fetch from public.profiles. Use maybeSingle() so a missing row
+    // returns null instead of throwing — the handle_new_user trigger should
+    // have created it, but we retry once if it's not there yet (race on signup).
+    let profileData: any = null;
+    let profileError: any = null;
+    for (let attempt = 0; attempt < 3 && !profileData; attempt++) {
+      const res = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', authData.user.id)
+        .maybeSingle();
+      profileData = res.data;
+      profileError = res.error;
+      if (profileError) break;
+      if (!profileData && attempt < 2) await new Promise((r) => setTimeout(r, 400));
+    }
 
-    // Step 4: Print profile data, error code, and error message
     console.log('[authService] Profile fetch result — data:', profileData);
     console.log('[authService] Profile fetch result — error code:', profileError?.code ?? 'none');
     console.log('[authService] Profile fetch result — error message:', profileError?.message ?? 'none');
-    console.log('[authService] Profile fetch result — error details:', profileError);
 
     if (profileError) {
-      // Do NOT hide the Supabase error behind a generic message.
       await supabase.auth.signOut();
-      throw new Error(
-        `Profile lookup failed [${profileError.code}]: ${profileError.message}`
-      );
+      throw new Error(`Profile lookup failed [${profileError.code}]: ${profileError.message}`);
     }
 
     if (!profileData) {
       console.error('[authService] No profile row found for user.id:', authData.user.id);
       await supabase.auth.signOut();
-      throw new Error(
-        `No profile row found in public.profiles for user id: ${authData.user.id}`
-      );
+      throw new Error('Your account profile could not be loaded. Please contact support.');
     }
 
     if (profileData.banned) {
@@ -209,16 +212,23 @@ export const authService = {
     console.log('[authService] getCurrentUser: session.user.id:', session.user.id);
     console.log('[authService] getCurrentUser: session.user.email:', session.user.email);
 
-    const { data: profileData, error: profileError } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', session.user.id)
-      .single();
+    // Use maybeSingle() + a short retry loop so a slow trigger doesn't fail the restore.
+    let profileData: any = null;
+    let profileError: any = null;
+    for (let attempt = 0; attempt < 3 && !profileData; attempt++) {
+      const res = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .maybeSingle();
+      profileData = res.data;
+      profileError = res.error;
+      if (profileError) break;
+      if (!profileData && attempt < 2) await new Promise((r) => setTimeout(r, 400));
+    }
 
     console.log('[authService] getCurrentUser: profile data:', profileData);
     console.log('[authService] getCurrentUser: error code:', profileError?.code ?? 'none');
-    console.log('[authService] getCurrentUser: error message:', profileError?.message ?? 'none');
-    console.log('[authService] getCurrentUser: error details:', profileError);
 
     if (profileError) {
       console.error('[authService] getCurrentUser: profile fetch failed:', profileError.code, profileError.message);
@@ -229,7 +239,7 @@ export const authService = {
     if (!profileData) {
       console.error('[authService] getCurrentUser: no profile row for user', session.user.id);
       await supabase.auth.signOut();
-      throw new Error(`No profile row found in public.profiles for user id: ${session.user.id}`);
+      throw new Error('Your account profile could not be loaded. Please sign in again.');
     }
 
     console.log('[authService] getCurrentUser: profile loaded, role:', profileData.role);

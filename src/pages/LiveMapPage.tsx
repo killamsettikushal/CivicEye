@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, CircleMarker, useMap } from 'react-leaflet';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, CircleMarker, Circle, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { motion } from 'framer-motion';
-import { Filter, MapPin, Flame, X, Loader2, MapPinOff } from 'lucide-react';
+import { Filter, MapPin, Flame, X, Loader2, MapPinOff, LocateFixed, Navigation } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { reportService } from '@/services/api';
 import type { Report } from '@/types';
@@ -50,8 +50,13 @@ export function LiveMapPage() {
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [filters, setFilters] = useState({ severity: '', status: '', department: '', category: '' });
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
+  const [userAccuracy, setUserAccuracy] = useState<number | null>(null);
   const [locating, setLocating] = useState(true);
   const [locationDenied, setLocationDenied] = useState(false);
+  const watchIdRef = useRef<number | null>(null);
+  const mapRef = useRef<any>(null);
+  const userMarkerRef = useRef<any>(null);
+  const userAccuracyCircleRef = useRef<any>(null);
 
   useEffect(() => {
     (async () => {
@@ -61,26 +66,66 @@ export function LiveMapPage() {
     })();
   }, []);
 
+  // Request browser geolocation: immediate fix + continuous watchPosition.
+  // When granted, the map centers on the user's real coordinates and follows
+  // them as they move. Hardcoded default center is only a fallback.
   useEffect(() => {
     if (!navigator.geolocation) {
       setLocating(false);
       setLocationDenied(true);
       return;
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setUserLocation([pos.coords.latitude, pos.coords.longitude]);
-        setLocating(false);
-        setLocationDenied(false);
-      },
-      () => {
-        setUserLocation(null);
-        setLocating(false);
-        setLocationDenied(true);
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
-    );
+    setLocating(true);
+
+    const onSuccess = (pos: GeolocationPosition) => {
+      const next: [number, number] = [pos.coords.latitude, pos.coords.longitude];
+      setUserLocation(next);
+      setUserAccuracy(pos.coords.accuracy ?? null);
+      setLocating(false);
+      setLocationDenied(false);
+      // Dynamically center the map on the user's actual coordinates
+      if (mapRef.current) {
+        mapRef.current.setView(next, 15, { animate: true, duration: 1.0 });
+      }
+    };
+
+    const onError = (err: GeolocationPositionError) => {
+      setUserLocation(null);
+      setLocating(false);
+      setLocationDenied(true);
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+    };
+
+    // Immediate fix for fast centering
+    navigator.geolocation.getCurrentPosition(onSuccess, onError, {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 10000,
+    });
+    // Continuous tracking as the user moves
+    watchIdRef.current = navigator.geolocation.watchPosition(onSuccess, onError, {
+      enableHighAccuracy: true,
+      timeout: 30000,
+      maximumAge: 15000,
+    });
+
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+    };
   }, []);
+
+  // Re-center the map on the user's current live location
+  const recenterOnUser = useCallback(() => {
+    if (userLocation && mapRef.current) {
+      mapRef.current.setView(userLocation, 16, { animate: true, duration: 0.8 });
+    }
+  }, [userLocation]);
 
   const mapCenter: [number, number] = userLocation ?? BANGALORE;
 
@@ -177,6 +222,16 @@ export function LiveMapPage() {
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">Live Incident Map</h3>
               </div>
               <div className="flex items-center gap-3 text-xs">
+                {userLocation && (
+                  <button
+                    onClick={recenterOnUser}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-500/20 transition-colors"
+                    title="Re-center on your location"
+                  >
+                    <LocateFixed className="w-3.5 h-3.5" />
+                    <span>My Location</span>
+                  </button>
+                )}
                 {Object.entries(SEVERITY_COLORS).map(([sev, color]) => (
                   <div key={sev} className="flex items-center gap-1">
                     <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
@@ -202,6 +257,16 @@ export function LiveMapPage() {
               </div>
             )}
 
+            {userLocation && (
+              <div className="px-4 py-2 text-xs flex items-center gap-2 border-b border-slate-200/60 dark:border-slate-700/50 bg-emerald-50/50 dark:bg-emerald-500/5">
+                <Navigation className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span className="text-emerald-700 dark:text-emerald-400">
+                  Live location active — {userLocation[0].toFixed(4)}, {userLocation[1].toFixed(4)}
+                  {userAccuracy ? ` (±${Math.round(userAccuracy)} m)` : ''}
+                </span>
+              </div>
+            )}
+
             <div style={{ height: '600px' }} className="w-full relative">
               {loading && (
                 <div className="absolute inset-0 z-[1000] flex items-center justify-center bg-white/60 dark:bg-slate-900/60 backdrop-blur-sm">
@@ -209,7 +274,13 @@ export function LiveMapPage() {
                 </div>
               )}
               {!loading && (
-                <MapContainer center={mapCenter} zoom={12} className="w-full h-full" style={{ zIndex: 0 }}>
+                <MapContainer
+                  center={mapCenter}
+                  zoom={12}
+                  className="w-full h-full"
+                  style={{ zIndex: 0 }}
+                  ref={(instance) => { mapRef.current = instance; }}
+                >
                   <MapRecenter center={mapCenter} />
                   <TileLayer
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -235,13 +306,37 @@ export function LiveMapPage() {
                     </Marker>
                   ))}
 
-                  {/* User location marker */}
+                  {/* User's live location marker with accuracy halo */}
                   {userLocation && (
-                    <CircleMarker
-                      center={userLocation}
-                      radius={8}
-                      pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 0.4, weight: 2 }}
-                    />
+                    <>
+                      <Marker
+                        position={userLocation}
+                        icon={L.divIcon({
+                          className: 'user-location-marker',
+                          html: `<div style="position:relative;">
+                            <div style="width:18px;height:18px;border-radius:50%;background:#2563eb;border:3px solid white;box-shadow:0 0 0 2px #2563eb44,0 2px 8px rgba(37,99,235,0.5);"></div>
+                            <div style="position:absolute;top:-6px;left:-6px;width:30px;height:30px;border-radius:50%;background:#2563eb33;animation:pulse 2s infinite;"></div>
+                          </div>`,
+                          iconSize: [30, 30],
+                          iconAnchor: [15, 15],
+                        })}
+                      >
+                        <Popup>
+                          <div className="p-1 min-w-[160px]">
+                            <p className="font-bold text-blue-600 flex items-center gap-1"><Navigation className="w-3.5 h-3.5" /> You are here</p>
+                            <p className="text-xs text-slate-500 mt-1">{userLocation[0].toFixed(5)}, {userLocation[1].toFixed(5)}</p>
+                            {userAccuracy && <p className="text-xs text-slate-400">Accuracy ±{Math.round(userAccuracy)} m</p>}
+                          </div>
+                        </Popup>
+                      </Marker>
+                      {userAccuracy && (
+                        <Circle
+                          center={userLocation}
+                          radius={userAccuracy}
+                          pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 0.08, weight: 1 }}
+                        />
+                      )}
+                    </>
                   )}
 
                   {/* Heatmap placeholder: circle markers around critical areas */}
