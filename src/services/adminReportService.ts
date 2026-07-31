@@ -1,5 +1,18 @@
 import { supabase } from '@/services/supabaseClient';
 
+/** Result returned by the `verify_and_reward_report` RPC. */
+export interface VerifyRewardResult {
+  success: boolean;
+  error?: string;
+  action?: string;
+  report_id?: string;
+  new_status?: string;
+  points_awarded?: number;
+  new_points?: number;
+  new_trust_score?: number;
+  new_level?: string;
+}
+
 /** Escapes special PostgREST filter characters in user input. */
 function sanitizeFilterValue(input: string): string {
   return input.replace(/[\\%_(),.'"]/g, (ch) => '\\' + ch);
@@ -119,26 +132,31 @@ export const adminReportService = {
     };
   },
 
+  /**
+   * Routes verify/resolve/reject through the atomic `verify_and_reward_report` RPC,
+   * which updates the report, credits points, updates the citizen's profile,
+   * logs to reward_history, and sends a notification — all in one transaction.
+   * Other status changes (assigned, under_progress, pending) use a plain update.
+   */
   async updateReportStatus(id: string, status: string): Promise<void> {
-    console.log('[adminReportService] updateReportStatus called with id:', id, 'new status:', status);
+    const actionMap: Record<string, string> = {
+      verified: 'verify',
+      resolved: 'resolve',
+      rejected: 'reject',
+    };
+    const rpcAction = actionMap[status];
 
-    const updates: any = { status, updated_at: new Date().toISOString() };
-    if (status === 'resolved') updates.resolved_at = new Date().toISOString();
-    if (status === 'under_progress') updates.resolved_at = null;
-
-    // Fetch the report first to log both the UUID (id) and the display ID (incident_id)
-    const { data: existing, error: fetchError } = await supabase
-      .from('reports')
-      .select('id, incident_id, status')
-      .eq('id', id)
-      .maybeSingle();
-
-    console.log('[adminReportService] report.id (UUID):', existing?.id ?? 'NOT FOUND');
-    console.log('[adminReportService] report.incident_id (display ID):', existing?.incident_id ?? 'N/A');
-    console.log('[adminReportService] status before update:', existing?.status ?? 'N/A');
-    if (fetchError) {
-      console.error('[adminReportService] Failed to fetch report before update:', fetchError.code, fetchError.message);
+    if (rpcAction) {
+      const result = await this.verifyAndReward(id, rpcAction);
+      if (!result.success) {
+        throw new Error(result.error ?? 'Verification transaction failed');
+      }
+      return;
     }
+
+    // Non-rewarding status changes (assigned, under_progress, pending, etc.)
+    const updates: any = { status, updated_at: new Date().toISOString() };
+    if (status === 'under_progress') updates.resolved_at = null;
 
     const { error } = await supabase
       .from('reports')
@@ -146,17 +164,26 @@ export const adminReportService = {
       .eq('id', id);
     if (error) throw error;
     await this.logAction('update_status', id, `Status changed to ${status}`);
+  },
 
-    // Fetch the updated report to confirm the status was persisted
-    const { data: updated, error: refetchError } = await supabase
-      .from('reports')
-      .select('id, incident_id, status')
-      .eq('id', id)
-      .maybeSingle();
-    console.log('[adminReportService] fetched status after update:', updated?.status ?? 'N/A');
-    if (refetchError) {
-      console.error('[adminReportService] Failed to refetch report after update:', refetchError.code, refetchError.message);
-    }
+  /**
+   * Calls the `verify_and_reward_report` RPC. Returns the JSON summary from the
+   * database transaction (points awarded, new trust score, new level, etc.).
+   */
+  async verifyAndReward(reportUuid: string, action: 'verify' | 'resolve' | 'reject'): Promise<VerifyRewardResult> {
+    const { data: userData } = await supabase.auth.getUser();
+    const adminId = userData.user?.id;
+    if (!adminId) throw new Error('Not authenticated');
+
+    const { data, error } = await supabase
+      .rpc('verify_and_reward_report', {
+        p_report_uuid: reportUuid,
+        p_action: action,
+        p_admin_id: adminId,
+      });
+
+    if (error) throw new Error(error.message);
+    return (data ?? { success: false, error: 'No response from server' }) as VerifyRewardResult;
   },
 
   async deleteReport(id: string): Promise<void> {

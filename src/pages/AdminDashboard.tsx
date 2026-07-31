@@ -190,10 +190,9 @@ export function AdminDashboard() {
 
   const handleApprove = async (id: string) => {
     try {
-      await adminReportService.updateReportStatus(id, 'verified');
-      const report = reports.find((r) => r.id === id);
-      if (report) await adminReportService.notifyCitizen(id, report.reporterId ?? null, 'report-approved', 'Report Approved', `Your report ${report.incidentId} has been approved and verified.`);
-      showToast('Report approved and verified', 'success');
+      const result = await adminReportService.verifyAndReward(id, 'verify');
+      if (!result.success) throw new Error(result.error ?? 'Verification failed');
+      showToast(`Report verified — citizen earned ${result.points_awarded ?? 0} points!`, 'success');
       setDrawerOpen(false);
       loadReports();
     } catch (err: any) {
@@ -203,9 +202,8 @@ export function AdminDashboard() {
 
   const handleReject = async (id: string) => {
     try {
-      await adminReportService.updateReportStatus(id, 'rejected');
-      const report = reports.find((r) => r.id === id);
-      if (report) await adminReportService.notifyCitizen(id, report.reporterId ?? null, 'report-rejected', 'Report Rejected', `Your report ${report.incidentId} has been rejected. Please review the details and resubmit if needed.`);
+      const result = await adminReportService.verifyAndReward(id, 'reject');
+      if (!result.success) throw new Error(result.error ?? 'Rejection failed');
       showToast('Report rejected', 'warning');
       setDrawerOpen(false);
       loadReports();
@@ -227,43 +225,48 @@ export function AdminDashboard() {
     }
   };
 
+  const refreshSelected = async (id: string) => {
+    const refreshed = (await adminReportService.getReports()).find((r: any) => r.id === id);
+    if (refreshed) {
+      const mapped: Report = {
+        id: refreshed.id,
+        incidentId: refreshed.incident_id,
+        category: refreshed.category,
+        categoryGroup: refreshed.category_group,
+        title: refreshed.title,
+        description: refreshed.description ?? '',
+        status: refreshed.status,
+        severity: refreshed.severity,
+        location: { lat: refreshed.lat ?? 0, lng: refreshed.lng ?? 0, address: refreshed.address ?? '', city: refreshed.city ?? '' },
+        timestamp: refreshed.created_at,
+        reporterId: refreshed.reporter_id ?? '',
+        reporterName: refreshed.reporter_name ?? 'Anonymous',
+        department: refreshed.department ?? '',
+        evidenceUrls: refreshed.evidence_urls ?? [],
+        aiResult: refreshed.ai_result ?? undefined,
+        vehicleNumber: refreshed.vehicle_number ?? undefined,
+        vehicleType: refreshed.vehicle_type ?? undefined,
+      } as any;
+      setSelectedReport(mapped);
+    }
+  };
+
   const handleStatusChange = async (id: string, status: string) => {
     try {
-      await adminReportService.updateReportStatus(id, status);
-      const report = reports.find((r) => r.id === id);
-      if (report) {
-        if (status === 'under_progress') {
+      if (status === 'resolved') {
+        const result = await adminReportService.verifyAndReward(id, 'resolve');
+        if (!result.success) throw new Error(result.error ?? 'Resolve failed');
+        showToast(`Issue resolved — citizen earned ${result.points_awarded ?? 0} points!`, 'success');
+      } else {
+        await adminReportService.updateReportStatus(id, status);
+        const report = reports.find((r) => r.id === id);
+        if (report && status === 'under_progress') {
           await adminReportService.notifyCitizen(id, report.reporterId ?? null, 'repair-started', 'Repair Started', `Work on your report ${report.incidentId} has started.`);
-        } else if (status === 'resolved') {
-          await adminReportService.notifyCitizen(id, report.reporterId ?? null, 'issue-resolved', 'Issue Resolved', `Your report ${report.incidentId} has been resolved. Thank you for your contribution!`);
         }
+        showToast(`Report marked as ${STATUS_LABELS[status] ?? status}`, 'success');
       }
-      showToast(`Report marked as ${STATUS_LABELS[status] ?? status}`, 'success');
-      // Reload reports from Supabase, then refresh the open drawer so the UI reflects the new status
       await loadReports();
-      const refreshed = (await adminReportService.getReports()).find((r: any) => r.id === id);
-      if (refreshed) {
-        const mapped: Report = {
-          id: refreshed.id,
-          incidentId: refreshed.incident_id,
-          category: refreshed.category,
-          categoryGroup: refreshed.category_group,
-          title: refreshed.title,
-          description: refreshed.description ?? '',
-          status: refreshed.status,
-          severity: refreshed.severity,
-          location: { lat: refreshed.lat ?? 0, lng: refreshed.lng ?? 0, address: refreshed.address ?? '', city: refreshed.city ?? '' },
-          timestamp: refreshed.created_at,
-          reporterId: refreshed.reporter_id ?? '',
-          reporterName: refreshed.reporter_name ?? 'Anonymous',
-          department: refreshed.department ?? '',
-          evidenceUrls: refreshed.evidence_urls ?? [],
-          aiResult: refreshed.ai_result ?? undefined,
-          vehicleNumber: refreshed.vehicle_number ?? undefined,
-          vehicleType: refreshed.vehicle_type ?? undefined,
-        } as any;
-        setSelectedReport(mapped);
-      }
+      await refreshSelected(id);
     } catch (err: any) {
       showToast(err?.message ?? 'Failed to update status', 'error');
     }

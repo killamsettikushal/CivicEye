@@ -105,8 +105,22 @@ export function AdminReportsPanel() {
 
   const handleStatusChange = async (id: string, status: string) => {
     try {
-      await adminReportService.updateReportStatus(id, status);
-      showToast(`Report status updated to ${STATUS_LABELS[status]}`, 'success');
+      if (status === 'verified') {
+        const result = await adminReportService.verifyAndReward(id, 'verify');
+        if (!result.success) throw new Error(result.error ?? 'Verification failed');
+        showToast(`Report verified — citizen earned ${result.points_awarded ?? 0} points!`, 'success');
+      } else if (status === 'resolved') {
+        const result = await adminReportService.verifyAndReward(id, 'resolve');
+        if (!result.success) throw new Error(result.error ?? 'Resolve failed');
+        showToast(`Issue resolved — citizen earned ${result.points_awarded ?? 0} points!`, 'success');
+      } else if (status === 'rejected') {
+        const result = await adminReportService.verifyAndReward(id, 'reject');
+        if (!result.success) throw new Error(result.error ?? 'Rejection failed');
+        showToast('Report rejected', 'warning');
+      } else {
+        await adminReportService.updateReportStatus(id, status);
+        showToast(`Report status updated to ${STATUS_LABELS[status] ?? status}`, 'success');
+      }
       setStatusModalOpen(false);
       setStatusModalReport(null);
       await loadReports();
@@ -116,8 +130,8 @@ export function AdminReportsPanel() {
           setSelected(refreshed);
         }
       }
-    } catch {
-      showToast('Failed to update status', 'error');
+    } catch (err: any) {
+      showToast(err?.message ?? 'Failed to update status', 'error');
     }
   };
 
